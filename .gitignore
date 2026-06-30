@@ -1,0 +1,29 @@
+# Build output
+/bin/
+*.exe
+*.test
+*.out
+
+# Test / coverage artifacts
+coverage.*
+
+# Vendored dependencies (not used, but guard against accidents)
+/vendor/
+
+# Do NOT ignore go.sum
+
+# Vim swap / session files
+*.swp
+*.swo
+*.swn
+*~
+Session.vim
+.netrwhist
+tags
+
+# LibreOffice / OpenOffice lock files
+.~lock.*#
+
+# Local / personal test data (only example.csv is tracked)
+/testdata/*
+!/testdata/example.csv
