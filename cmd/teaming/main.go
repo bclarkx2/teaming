@@ -2,12 +2,24 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"text/tabwriter"
 
 	"github.com/bclarkx2/teaming"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+// writeTeamSummary renders summaries as an aligned table to w using tab stops.
+func writeTeamSummary(w io.Writer, summaries []teaming.TeamSummary) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "Team\tPeople\tGroups")
+	for _, s := range summaries {
+		fmt.Fprintf(tw, "%d\t%d\t%d\n", s.Team, s.People, s.Groups)
+	}
+	tw.Flush()
+}
 
 func newRootCmd() *cobra.Command {
 	v := viper.New()
@@ -84,6 +96,8 @@ When --output is omitted it defaults to --input (in-place update).`,
 
 			fmt.Fprintf(os.Stderr, "Assigned %d people across %d teams → %s\n",
 				len(people), len(teamSet), cfg.Output)
+
+			writeTeamSummary(os.Stderr, teaming.Summarize(assignments))
 
 			return nil
 		},

@@ -113,6 +113,21 @@ Run teaming:
 teaming -i guests.csv -o teams.csv --min 3 --max 4
 ```
 
+After writing the output file, teaming prints a per-team summary to stderr showing
+how many people and distinct groups landed on each team:
+
+```
+Assigned 7 people across 2 teams → teams.csv
+Team  People  Groups
+1     3       2
+2     4       2
+```
+
+The same aggregation is available in the importable library layer as
+`teaming.Summarize(assignments []Assignment) []TeamSummary`. It returns one
+`TeamSummary` per team (sorted by team number), where `People` is the total
+headcount and `Groups` is the number of distinct groups on that team.
+
 Result (`teams.csv`):
 
 ```csv
