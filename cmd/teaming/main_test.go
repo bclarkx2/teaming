@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -82,6 +83,24 @@ func TestValidate(t *testing.T) {
 		Config{Input: "in.csv", Min: 2, Max: 4},
 		"",
 	))
+
+	t.Run("exact_threshold_negative", run(
+		"exact_threshold_negative",
+		Config{Input: "in.csv", Output: "out.csv", Min: 3, Max: 5, ExactThreshold: -1},
+		"--exact-threshold must be >= 0",
+	))
+
+	t.Run("exact_threshold_zero_ok", run(
+		"exact_threshold_zero_ok",
+		Config{Input: "in.csv", Output: "out.csv", Min: 3, Max: 5, ExactThreshold: 0},
+		"",
+	))
+
+	t.Run("exact_threshold_positive_ok", run(
+		"exact_threshold_positive_ok",
+		Config{Input: "in.csv", Output: "out.csv", Min: 3, Max: 5, ExactThreshold: 20},
+		"",
+	))
 }
 
 // TestValidateOutputDefaultsToInput verifies the output-defaults-to-input behaviour.
@@ -115,6 +134,9 @@ func TestConfigPrecedence(t *testing.T) {
 			}
 			if got.Max != want.Max {
 				t.Errorf("Max: got %d, want %d", got.Max, want.Max)
+			}
+			if got.ExactThreshold != want.ExactThreshold {
+				t.Errorf("ExactThreshold: got %d, want %d", got.ExactThreshold, want.ExactThreshold)
 			}
 		}
 	}
@@ -157,6 +179,65 @@ func TestConfigPrecedence(t *testing.T) {
 		},
 		Config{Input: "flag_in.csv", Output: "env_out.csv", Min: 4, Max: 7},
 	))
+
+	t.Run("exact_threshold_default_zero", run(
+		"exact_threshold_default_zero",
+		func(v *viper.Viper) {
+			v.Set("input", "a.csv")
+			v.Set("output", "b.csv")
+			v.Set("min", 3)
+			v.Set("max", 6)
+			// exact-threshold not set → resolves to zero (library default)
+		},
+		Config{Input: "a.csv", Output: "b.csv", Min: 3, Max: 6, ExactThreshold: 0},
+	))
+
+	// ExactThreshold-specific tests use their own subtest t for isolated env vars.
+	t.Run("exact_threshold_env_var", func(t *testing.T) {
+		t.Helper()
+		t.Setenv("TEAMING_EXACT_THRESHOLD", "20")
+		v := newTestViper()
+		v.SetEnvPrefix("TEAMING")
+		v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+		v.AutomaticEnv()
+		got := Resolve(v)
+		if got.ExactThreshold != 20 {
+			t.Errorf("ExactThreshold: got %d, want 20", got.ExactThreshold)
+		}
+	})
+
+	t.Run("exact_threshold_flag_beats_env", func(t *testing.T) {
+		t.Helper()
+		t.Setenv("TEAMING_EXACT_THRESHOLD", "20")
+		v := newTestViper()
+		v.SetEnvPrefix("TEAMING")
+		v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+		v.AutomaticEnv()
+		// Simulate flag override (viper.Set has highest priority).
+		v.Set("exact-threshold", 30)
+		got := Resolve(v)
+		if got.ExactThreshold != 30 {
+			t.Errorf("ExactThreshold: got %d, want 30", got.ExactThreshold)
+		}
+	})
+
+	t.Run("exact_threshold_config_file", func(t *testing.T) {
+		t.Helper()
+		dir := t.TempDir()
+		p := filepath.Join(dir, "teaming.yaml")
+		content := "exact-threshold: 15\n"
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("writing test config: %v", err)
+		}
+		v := newTestViper()
+		if err := loadConfigFile(v, p); err != nil {
+			t.Fatalf("loading config: %v", err)
+		}
+		got := Resolve(v)
+		if got.ExactThreshold != 15 {
+			t.Errorf("ExactThreshold: got %d, want 15", got.ExactThreshold)
+		}
+	})
 }
 
 // TestConfigFileLoading verifies that loadConfigFile reads YAML and that a
@@ -232,6 +313,7 @@ func TestBindFlags(t *testing.T) {
 			cmd.Flags().StringP("output", "o", "", "output file")
 			cmd.Flags().Int("min", 0, "min team size")
 			cmd.Flags().Int("max", 0, "max team size")
+			cmd.Flags().Int("exact-threshold", 0, "exact threshold")
 
 			cmd.SetArgs(flagArgs)
 			if err := cmd.Execute(); err != nil {

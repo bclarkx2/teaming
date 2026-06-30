@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -9,11 +10,12 @@ import (
 
 // Config holds the resolved runtime configuration for the teaming command.
 type Config struct {
-	ConfigFile string
-	Input      string
-	Output     string
-	Min        int
-	Max        int
+	ConfigFile     string
+	Input          string
+	Output         string
+	Min            int
+	Max            int
+	ExactThreshold int
 }
 
 // bindFlags wires each cobra flag to its matching viper key and sets up the
@@ -21,14 +23,17 @@ type Config struct {
 //
 // Precedence (highest to lowest):
 //  1. command-line flags
-//  2. environment variables (TEAMING_INPUT, TEAMING_OUTPUT, TEAMING_MIN, TEAMING_MAX)
+//  2. environment variables (TEAMING_INPUT, TEAMING_OUTPUT, TEAMING_MIN, TEAMING_MAX, TEAMING_EXACT_THRESHOLD)
 //  3. config file (teaming.yaml in working directory, or --config path)
 //  4. flag defaults
 func bindFlags(v *viper.Viper, cmd *cobra.Command) error {
 	v.SetEnvPrefix("TEAMING")
+	// Map dashes in flag/key names to underscores for env-var lookups so that
+	// --exact-threshold resolves from TEAMING_EXACT_THRESHOLD.
+	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	v.AutomaticEnv()
 
-	for _, name := range []string{"input", "output", "min", "max"} {
+	for _, name := range []string{"input", "output", "min", "max", "exact-threshold"} {
 		if err := v.BindPFlag(name, cmd.Flags().Lookup(name)); err != nil {
 			return fmt.Errorf("teaming: binding flag %q: %w", name, err)
 		}
@@ -69,10 +74,11 @@ func loadConfigFile(v *viper.Viper, configFile string) error {
 // bound and the config file loaded).
 func Resolve(v *viper.Viper) Config {
 	return Config{
-		Input:  v.GetString("input"),
-		Output: v.GetString("output"),
-		Min:    v.GetInt("min"),
-		Max:    v.GetInt("max"),
+		Input:          v.GetString("input"),
+		Output:         v.GetString("output"),
+		Min:            v.GetInt("min"),
+		Max:            v.GetInt("max"),
+		ExactThreshold: v.GetInt("exact-threshold"),
 	}
 }
 
@@ -95,6 +101,10 @@ func (cfg *Config) Validate() error {
 
 	if cfg.Max < cfg.Min {
 		return fmt.Errorf("teaming: --max (%d) must be >= --min (%d)", cfg.Max, cfg.Min)
+	}
+
+	if cfg.ExactThreshold < 0 {
+		return fmt.Errorf("teaming: --exact-threshold must be >= 0, got %d", cfg.ExactThreshold)
 	}
 
 	return nil

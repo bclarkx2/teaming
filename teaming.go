@@ -275,9 +275,25 @@ func solveExact(sizes []int, min, max int) []int {
 }
 
 // solveGreedy is a near-optimal (not guaranteed optimal) heuristic for large
-// inputs: first-fit-decreasing packing into bins of capacity Max, followed by
-// a leftover-merge pass that lifts under-Min teams toward Min by merging them.
-// Returns teamOfGroup indexed by ORIGINAL group index.
+// inputs. It runs in three phases:
+//
+//  1. First-fit-decreasing packing into bins of capacity Max.
+//  2. A leftover-merge pass that lifts under-Min teams toward Min by merging
+//     under-Min bins WITH EACH OTHER (never exceeding Max).
+//  3. A redistribution/repair pass that lifts any remaining under-Min bins
+//     toward Min by importing whole groups from healthy donor bins that can
+//     spare them (donor stays >= Min, recipient stays <= Max).
+//
+// The merge and redistribution passes are run in a loop because one can newly
+// enable the other; the loop terminates because each pass strictly reduces the
+// number of bins (merge) or strictly increases an under-Min bin's size toward
+// Min by importing groups bounded by the donor inventory (redistribution).
+//
+// Neither pass can ever create an over-Max team or drop a donor below Min, so
+// they can only hold overMax equal and weakly improve atLeastMin/belowMin —
+// they can never worsen the lexicographic score. Every pass is fully
+// deterministic (no reliance on map iteration order). Returns teamOfGroup
+// indexed by ORIGINAL group index.
 func solveGreedy(sizes []int, min, max int) []int {
 	n := len(sizes)
 
@@ -315,47 +331,180 @@ func solveGreedy(sizes []int, min, max int) []int {
 		}
 	}
 
-	// Leftover-merge pass: combine under-Min bins to lift them toward Min.
-	// Repeatedly merge the two smallest under-Min bins while doing so does not
-	// create an over-Max team (prefer staying within Max). If merging two
-	// under-Min bins would exceed Max we still merge them only when both are
-	// under Min and no Max-respecting merge is available, since reducing
-	// below-Min count is a higher objective priority than respecting Max... but
-	// rule 2 (over-Max) outranks rule 4 (below-Min), so we must NOT create an
-	// over-Max team to fix a below-Min team. Therefore we only merge when the
-	// result stays <= Max.
-	for {
-		// Collect under-Min bins.
-		var underIdx []int
-		for i, b := range bins {
-			if b.size < min {
-				underIdx = append(underIdx, i)
+	// firstGroup returns the smallest original group index in a bin, used as a
+	// deterministic tie-break key. Bins always hold at least one group here.
+	firstGroup := func(b *bin) int {
+		fg := b.groups[0]
+		for _, gi := range b.groups[1:] {
+			if gi < fg {
+				fg = gi
 			}
 		}
-		if len(underIdx) < 2 {
-			break
-		}
-		// Sort under-Min bins by ascending size for a stable, greedy merge.
-		sort.SliceStable(underIdx, func(a, b int) bool {
-			return bins[underIdx[a]].size < bins[underIdx[b]].size
-		})
+		return fg
+	}
 
-		// Find a pair of under-Min bins whose merged size stays <= Max.
-		merged := false
-		for x := 0; x < len(underIdx) && !merged; x++ {
-			for y := x + 1; y < len(underIdx); y++ {
-				i, j := underIdx[x], underIdx[y]
-				if bins[i].size+bins[j].size <= max {
-					bins[i].groups = append(bins[i].groups, bins[j].groups...)
-					bins[i].size += bins[j].size
-					// Remove bin j.
-					bins = append(bins[:j], bins[j+1:]...)
-					merged = true
-					break
+	// mergePass combines under-Min bins to lift them toward Min. Repeatedly
+	// merge under-Min bins (smallest first) while doing so keeps the result
+	// <= Max. Rule 2 (over-Max) outranks rule 4 (below-Min), so we must NOT
+	// create an over-Max team to fix a below-Min team; we only merge when the
+	// result stays <= Max. Returns true if any merge occurred.
+	mergePass := func() bool {
+		changed := false
+		for {
+			// Collect under-Min bins.
+			var underIdx []int
+			for i, b := range bins {
+				if b.size < min {
+					underIdx = append(underIdx, i)
 				}
 			}
+			if len(underIdx) < 2 {
+				break
+			}
+			// Sort under-Min bins by ascending size for a stable, greedy merge.
+			sort.SliceStable(underIdx, func(a, b int) bool {
+				return bins[underIdx[a]].size < bins[underIdx[b]].size
+			})
+
+			// Find a pair of under-Min bins whose merged size stays <= Max.
+			merged := false
+			for x := 0; x < len(underIdx) && !merged; x++ {
+				for y := x + 1; y < len(underIdx); y++ {
+					i, j := underIdx[x], underIdx[y]
+					if bins[i].size+bins[j].size <= max {
+						bins[i].groups = append(bins[i].groups, bins[j].groups...)
+						bins[i].size += bins[j].size
+						// Remove bin j.
+						bins = append(bins[:j], bins[j+1:]...)
+						merged = true
+						changed = true
+						break
+					}
+				}
+			}
+			if !merged {
+				break
+			}
 		}
-		if !merged {
+		return changed
+	}
+
+	// redistributePass lifts under-Min bins toward Min by importing whole
+	// groups from healthy donor bins that can spare them. For each under-Min
+	// recipient U (deterministic order: ascending size, then ascending
+	// smallest-group-index), it repeatedly searches all other bins D and each
+	// group g in D for the largest group that fits without pushing the donor
+	// below Min (D.size - sizes[g] >= min) or the recipient over Max
+	// (U.size + sizes[g] <= max). Ties break by smallest donor first-group-index
+	// then smallest group index. This can only weakly improve the score.
+	// Returns true if any move occurred.
+	redistributePass := func() bool {
+		changed := false
+		for {
+			// Collect under-Min recipients in deterministic order.
+			var underIdx []int
+			for i, b := range bins {
+				if b.size < min {
+					underIdx = append(underIdx, i)
+				}
+			}
+			if len(underIdx) == 0 {
+				break
+			}
+			sort.SliceStable(underIdx, func(a, b int) bool {
+				ba, bb := bins[underIdx[a]], bins[underIdx[b]]
+				if ba.size != bb.size {
+					return ba.size < bb.size
+				}
+				return firstGroup(ba) < firstGroup(bb)
+			})
+
+			movedThisSweep := false
+			for _, ui := range underIdx {
+				u := bins[ui]
+				for u.size < min {
+					// Search for the best legal move into U.
+					bestDonor := -1
+					bestGroupPos := -1
+					bestSize := 0
+					bestDonorFG := 0
+					bestGroupIdx := 0
+					for di, d := range bins {
+						if di == ui {
+							continue
+						}
+						dfg := firstGroup(d)
+						for gp, gi := range d.groups {
+							sz := sizes[gi]
+							// Guards: donor stays >= Min, recipient stays <= Max.
+							if d.size-sz < min {
+								continue
+							}
+							if u.size+sz > max {
+								continue
+							}
+							better := false
+							if bestDonor == -1 {
+								better = true
+							} else if sz != bestSize {
+								// Prefer the largest fitting group (fewest moves).
+								better = sz > bestSize
+							} else if dfg != bestDonorFG {
+								better = dfg < bestDonorFG
+							} else {
+								better = gi < bestGroupIdx
+							}
+							if better {
+								bestDonor = di
+								bestGroupPos = gp
+								bestSize = sz
+								bestDonorFG = dfg
+								bestGroupIdx = gi
+							}
+						}
+					}
+					if bestDonor == -1 {
+						// No legal move can help U; it is unfixable here.
+						break
+					}
+					// Execute the move: remove group from donor, add to U.
+					d := bins[bestDonor]
+					gi := d.groups[bestGroupPos]
+					d.groups = append(d.groups[:bestGroupPos], d.groups[bestGroupPos+1:]...)
+					d.size -= bestSize
+					u.groups = append(u.groups, gi)
+					u.size += bestSize
+					changed = true
+					movedThisSweep = true
+				}
+			}
+
+			// Defensively drop any now-empty donor bins so they never become
+			// phantom teams. (The donor-stays-valid guard makes this impossible
+			// when min >= 1, but handle it anyway.)
+			kept := bins[:0]
+			for _, b := range bins {
+				if len(b.groups) > 0 {
+					kept = append(kept, b)
+				}
+			}
+			bins = kept
+
+			if !movedThisSweep {
+				break
+			}
+		}
+		return changed
+	}
+
+	// Run the merge and redistribution passes in a loop: each can newly enable
+	// the other. The loop terminates because every iteration that continues
+	// made at least one change, and changes monotonically reduce bin count or
+	// raise under-Min bins toward Min from a finite donor inventory.
+	for {
+		c1 := mergePass()
+		c2 := redistributePass()
+		if !c1 && !c2 {
 			break
 		}
 	}

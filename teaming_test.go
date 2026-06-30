@@ -307,6 +307,74 @@ func TestAssignGreedyFallback(t *testing.T) {
 	}
 }
 
+// TestAssignRedistributionRepair reproduces the failure class where FFD packs
+// groups into several full Max-capacity teams plus one small leftover team
+// below Min, and the leftover-merge pass cannot help (only one under-Min bin).
+// The redistribution/repair pass must lift the leftover to >= Min by importing
+// small whole groups from healthy donor teams. Mirrors the party numbers:
+// Min=4, Max=6, 25 groups summing to 45 people, with many size-2 and several
+// size-1 groups available to donate.
+func TestAssignRedistributionRepair(t *testing.T) {
+	// 5 groups of size 3 (15) + 10 groups of size 2 (20) + 10 groups of
+	// size 1 (10) = 45 people across 25 groups.
+	var people []Person
+	gid := 0
+	add := func(size, count int) {
+		for c := 0; c < count; c++ {
+			groupName := "G" + string(rune('A'+gid))
+			gid++
+			for m := 0; m < size; m++ {
+				people = append(people, Person{
+					Name:  groupName + "-" + string(rune('0'+m)),
+					Group: groupName,
+				})
+			}
+		}
+	}
+	add(3, 5)
+	add(2, 10)
+	add(1, 10)
+
+	opts := Options{Min: 4, Max: 6, ExactThreshold: 5} // force greedy (25 > 5)
+	got, err := Assign(people, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Every person assigned exactly once, in input order.
+	if len(got) != len(people) {
+		t.Fatalf("got %d assignments, want %d", len(got), len(people))
+	}
+	for i := range got {
+		if got[i].Person != people[i].Name || got[i].Group != people[i].Group {
+			t.Fatalf("assignment[%d] mismatch: %+v", i, got[i])
+		}
+	}
+
+	// Groups intact: a group never spans two teams.
+	groupTeams(t, got)
+
+	// No team over Max, and zero teams below Min.
+	sizes := teamSizes(got)
+	for _, sz := range sizes {
+		if sz > opts.Max {
+			t.Fatalf("team of size %d exceeds Max=%d (sizes=%v)", sz, opts.Max, sizes)
+		}
+		if sz < opts.Min {
+			t.Fatalf("team of size %d below Min=%d (sizes=%v)", sz, opts.Min, sizes)
+		}
+	}
+
+	// Sanity: all 45 people accounted for.
+	total := 0
+	for _, sz := range sizes {
+		total += sz
+	}
+	if total != len(people) {
+		t.Fatalf("team sizes sum to %d, want %d", total, len(people))
+	}
+}
+
 // TestAssignDeterminism verifies byte-identical output across repeated runs.
 func TestAssignDeterminism(t *testing.T) {
 	people := []Person{

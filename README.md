@@ -43,6 +43,7 @@ teaming -i guests.csv -o teams.csv --min 3 --max 4
 | `--output` | `-o` | same as input | Output CSV file (written with `person,group,team`) |
 | `--min` | | `3` | Minimum desired team size |
 | `--max` | | `4` | Maximum desired team size |
+| `--exact-threshold` | | `0` | Maximum number of groups for the exact optimal solver; above this the faster greedy heuristic is used. `0` uses the built-in default (12). |
 | `--config` | | `teaming.yaml` | Config file path |
 
 ### Configuration precedence
@@ -60,6 +61,7 @@ export TEAMING_INPUT=guests.csv
 export TEAMING_OUTPUT=teams.csv
 export TEAMING_MIN=3
 export TEAMING_MAX=4
+export TEAMING_EXACT_THRESHOLD=20   # optional; 0 (or unset) = built-in default (12)
 teaming
 ```
 
@@ -71,6 +73,7 @@ input:  guests.csv
 output: teams.csv
 min: 3
 max: 4
+exact-threshold: 0   # 0 = built-in default (12); set higher to force exact solver on larger inputs
 ```
 
 ### Input and output CSV

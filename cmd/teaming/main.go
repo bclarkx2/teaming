@@ -55,8 +55,9 @@ When --output is omitted it defaults to --input (in-place update).`,
 
 			// --- Assign ---
 			opts := teaming.Options{
-				Min: cfg.Min,
-				Max: cfg.Max,
+				Min:            cfg.Min,
+				Max:            cfg.Max,
+				ExactThreshold: cfg.ExactThreshold,
 			}
 
 			assignments, err := teaming.Assign(people, opts)
@@ -93,6 +94,7 @@ When --output is omitted it defaults to --input (in-place update).`,
 	cmd.Flags().StringP("output", "o", "", "output CSV file (defaults to --input for in-place update)")
 	cmd.Flags().Int("min", 0, "minimum team size (required, >= 1)")
 	cmd.Flags().Int("max", 0, "maximum team size (required, >= min)")
+	cmd.Flags().Int("exact-threshold", 0, "Maximum number of groups for the exact optimal solver; above this the faster greedy heuristic is used. 0 uses the built-in default (12).")
 	cmd.Flags().String("config", "", "path to YAML config file (default: teaming.yaml in working directory)")
 
 	return cmd

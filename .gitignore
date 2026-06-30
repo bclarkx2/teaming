@@ -20,3 +20,10 @@ coverage.*
 Session.vim
 .netrwhist
 tags
+
+# LibreOffice / OpenOffice lock files
+.~lock.*#
+
+# Local / personal test data (only example.csv is tracked)
+/testdata/*
+!/testdata/example.csv
